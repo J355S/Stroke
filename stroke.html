@@ -20,7 +20,7 @@ body{
   background:radial-gradient(120% 80% at 50% -10%,#0E3A4B 0%,var(--deep) 55%,#04161E 100%);
   -webkit-font-smoothing:antialiased;
 }
-button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;touch-action:manipulation}
 :focus-visible{outline:2px solid var(--chlorine);outline-offset:2px;border-radius:6px}
 .app{height:100dvh;display:flex;flex-direction:column;gap:9px;padding:9px;padding-top:max(9px,env(safe-area-inset-top))}
 
@@ -51,6 +51,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   background:#04161E;border:1px solid var(--line);display:flex;flex-direction:column;
 }
 .lane.dragover{border-color:var(--chlorine)}
+.lane.controlled{border-color:var(--lane);box-shadow:0 0 0 1px var(--lane)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{padding:6px 11px;font-size:12.5px;color:var(--muted);border-right:1px solid var(--line)}
+.seg button:last-child{border-right:none}
+.seg button[aria-pressed="true"]{background:rgba(255,176,32,.18);color:var(--lane)}
 .lane.marked{border-color:var(--lane)}
 .lane-head{
   position:absolute;inset:0 0 auto 0;z-index:5;display:flex;align-items:center;gap:6px;
@@ -171,6 +176,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       <button class="pill" data-speed="0.6">0.6×</button>
       <button class="pill" data-speed="1" aria-pressed="true">1×</button>
       <button class="pill" id="loopBtn" aria-pressed="true">Loop</button>
+      <div class="div"></div>
+      <span class="legend">Controls</span>
+      <span class="seg" id="seg">
+        <button data-target="both" aria-pressed="true">Both</button>
+        <button data-target="0" aria-pressed="false">Front</button>
+        <button data-target="1" aria-pressed="false">Underwater</button>
+      </span>
     </div>
     <div class="row">
       <span class="legend">Draw</span>
@@ -197,7 +209,7 @@ const VIEWS = [
   {key:"under", label:"Underwater"}
 ];
 const FRAME = 1/30;
-const state = {t:0,playing:false,speed:1,loop:true,tool:"line",color:"#FFB020",sticky:false,panes:[],undo:[]};
+const state = {t:0,playing:false,speed:1,loop:true,tool:"line",color:"#FFB020",sticky:false,target:'both',panes:[],undo:[]};
 
 const lanesEl = document.getElementById("lanes");
 VIEWS.forEach(v=>{
@@ -231,7 +243,7 @@ VIEWS.forEach(v=>{
   p.ctx = p.canvas.getContext("2d");
   state.panes.push(p);
 
-  p.video.addEventListener("loadedmetadata", ()=>{ updateReadout(); seek(state.t); });
+  p.video.addEventListener("loadedmetadata", ()=>{ updateReadout(); });
   p.video.addEventListener("error", ()=>{
     p.footEl.style.color = "#FF5A5F";
     p.footEl.textContent = "Clip wouldn't load here — open this file in Safari, or tap Load";
@@ -266,11 +278,11 @@ const ro = new ResizeObserver(()=> state.panes.forEach(p=> fit(p.canvas)));
 state.panes.forEach(p=> ro.observe(p.root));
 
 /* ---------- clock ---------- */
+function targets(){ return state.target === "both" ? state.panes : [state.panes[state.target]]; }
+function lead(){ return state.target === "both" ? state.panes[0] : state.panes[state.target]; }
 function duration(){
   let d = Infinity;
-  for(const p of state.panes){
-    if(isFinite(p.video.duration)) d = Math.min(d, p.video.duration);
-  }
+  for(const p of targets()) if(isFinite(p.video.duration)) d = Math.min(d, p.video.duration);
   return isFinite(d) ? Math.max(d, 0.2) : 1;
 }
 function setPlaying(on){
@@ -279,29 +291,40 @@ function setPlaying(on){
   if(!on) state.panes.forEach(p=> p.video.pause());
 }
 function seek(t){
-  state.t = Math.max(0, Math.min(t, duration()));
-  state.panes.forEach(p=>{
+  const tt = Math.max(0, t);
+  targets().forEach(p=>{
     if(!isFinite(p.video.duration)) return;
-    p.video.currentTime = Math.max(0, Math.min(state.t, p.video.duration - 0.001));
+    p.video.currentTime = Math.max(0, Math.min(tt, p.video.duration - 0.001));
   });
 }
-function step(dir){ setPlaying(false); seek(state.t + dir*FRAME); }
+function step(dir){ setPlaying(false); seek(lead().video.currentTime + dir*FRAME); }
+function setTarget(v){
+  state.target = v;
+  setPlaying(false);
+  document.querySelectorAll("[data-target]").forEach(b=> b.setAttribute("aria-pressed", b.dataset.target === String(v)));
+  state.panes.forEach((p,i)=> p.root.classList.toggle("controlled", v !== "both" && String(i) === String(v)));
+}
 
 let last = performance.now();
 function tick(now){
-  const dt = Math.min((now-last)/1000, 0.1); last = now;
+  last = now;
   if(state.playing){
-    const a = state.panes[0];
-    if(a && !a.video.paused) state.t = a.video.currentTime;
-    else state.t += dt * state.speed;
-    if(state.t >= duration()){ if(state.loop) seek(0); else { seek(duration()); setPlaying(false); } }
-    state.panes.forEach(p=>{
+    const tg = targets();
+    state.panes.forEach(p=>{ if(!tg.includes(p) && !p.video.paused) p.video.pause(); });
+    tg.forEach(p=>{
       p.video.playbackRate = Math.max(0.0625, Math.min(4, state.speed));
       if(p.video.paused) p.video.play().catch(()=>{});
-      if(isFinite(p.video.duration) && Math.abs(p.video.currentTime - state.t) > 0.18){
-        p.video.currentTime = Math.max(0, Math.min(state.t, p.video.duration - 0.001));
+      if(isFinite(p.video.duration) && p.video.currentTime >= p.video.duration - 0.05){
+        if(state.loop) p.video.currentTime = 0; else setPlaying(false);
       }
     });
+    if(tg.length > 1){
+      const a = tg[0];
+      tg.slice(1).forEach(p=>{
+        if(isFinite(p.video.duration) && Math.abs(p.video.currentTime - a.video.currentTime) > 0.2)
+          p.video.currentTime = Math.min(a.video.currentTime, p.video.duration - 0.001);
+      });
+    }
   }
   state.panes.forEach(drawAnnotations);
   updateReadout();
@@ -316,12 +339,12 @@ function fmt(s){
 }
 const rope=document.getElementById("rope"), ropeFill=document.getElementById("ropeFill"), ropeKnob=document.getElementById("ropeKnob");
 function updateReadout(){
-  const d = duration(), cur = state.t, pct = d ? (cur/d)*100 : 0;
+  const d = duration(), cur = lead().video.currentTime || 0, pct = d ? (cur/d)*100 : 0;
   document.getElementById("tcNow").textContent = fmt(cur);
   document.getElementById("tcEnd").textContent = fmt(d);
   ropeFill.style.width = pct+"%"; ropeKnob.style.left = pct+"%";
   const marks = new Set();
-  state.panes.forEach(p=> p.shapes.forEach(s=> marks.add(Math.round(s.time*10)/10)));
+  lead().shapes.forEach(s=> marks.add(Math.round(s.time*10)/10));
   const have = rope.querySelectorAll(".flagmark");
   if(have.length !== marks.size){
     have.forEach(n=> n.remove());
@@ -362,8 +385,8 @@ function attachDrawing(p){
   c.addEventListener("pointerup", end);
   c.addEventListener("pointercancel", end);
 }
-function commit(p,s){ s.color=state.color; s.time=state.t; p.shapes.push(s); state.undo.push(p); p.draft=null; }
-function visible(s){ return state.sticky || Math.abs(s.time - state.t) < 0.2; }
+function commit(p,s){ s.color=state.color; s.time=p.video.currentTime; p.shapes.push(s); state.undo.push(p); p.draft=null; }
+function visible(s,p){ return state.sticky || Math.abs(s.time - p.video.currentTime) < 0.2; }
 function dot(ctx,q,lw){ ctx.beginPath(); ctx.arc(q.x,q.y,lw*1.1,0,Math.PI*2); ctx.fill(); }
 
 function drawAnnotations(p){
@@ -371,7 +394,7 @@ function drawAnnotations(p){
   if(!w||!h) return;
   ctx.clearRect(0,0,w,h);
   const lw = Math.max(2.5, Math.min(w,h)*0.008);
-  const list = p.shapes.filter(visible);
+  const list = p.shapes.filter(s=> visible(s,p));
   if(p.draft) list.push(p.draft);
   if(p.pts.length && !p.draft) list.push({tool:"angle",pts:p.pts,color:state.color});
   for(const s of list){
@@ -432,12 +455,8 @@ document.getElementById("layoutBtn").onclick = e=>{
 ["gesturestart","gesturechange","gestureend"].forEach(ev=>
   document.addEventListener(ev, e=> e.preventDefault(), {passive:false}));
 document.addEventListener("dblclick", e=> e.preventDefault(), {passive:false});
-let lastTap = 0;
-document.addEventListener("touchend", e=>{
-  const now = Date.now();
-  if(now - lastTap < 350) e.preventDefault();
-  lastTap = now;
-}, {passive:false});
+document.querySelectorAll("[data-target]").forEach(b=> b.onclick = ()=>
+  setTarget(b.dataset.target === "both" ? "both" : Number(b.dataset.target)));
 
 setTimeout(()=> state.panes.forEach(p=> fit(p.canvas)), 60);
 };
@@ -462,12 +481,8 @@ document.addEventListener("keydown", e=>{
 ["gesturestart","gesturechange","gestureend"].forEach(ev=>
   document.addEventListener(ev, e=> e.preventDefault(), {passive:false}));
 document.addEventListener("dblclick", e=> e.preventDefault(), {passive:false});
-let lastTap = 0;
-document.addEventListener("touchend", e=>{
-  const now = Date.now();
-  if(now - lastTap < 350) e.preventDefault();
-  lastTap = now;
-}, {passive:false});
+document.querySelectorAll("[data-target]").forEach(b=> b.onclick = ()=>
+  setTarget(b.dataset.target === "both" ? "both" : Number(b.dataset.target)));
 
 setTimeout(()=> state.panes.forEach(p=> fit(p.canvas)), 60);
 </script>
