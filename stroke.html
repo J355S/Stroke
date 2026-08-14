@@ -42,6 +42,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .chip[aria-pressed="true"]{background:rgba(63,224,200,.16);border-color:var(--chlorine);color:var(--chlorine)}
 .chip.hot{border-color:var(--lane);color:var(--lane)}
 
+.banner{padding:7px 12px;border-radius:9px;background:rgba(255,176,32,.14);border:1px solid var(--lane);color:var(--lane);font-size:13px}
 .lanes{flex:1;min-height:0;display:grid;gap:9px;grid-template-columns:1fr 1fr}
 .lanes.stack{grid-template-columns:1fr;grid-template-rows:1fr 1fr}
 
@@ -150,10 +151,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   <header class="top">
     <div class="mark"><h1>Stroke</h1><span>Stroke analysis — two angles</span></div>
     <div class="spacer"></div>
-    <button class="chip" id="alignBtn">Align on stroke</button>
+    <button class="chip" id="alignBtn">Reset sync</button>
     <button class="chip" id="layoutBtn" aria-pressed="false">Stack</button>
   </header>
 
+  <div id="banner" class="banner" style="display:none"></div>
   <main class="lanes" id="lanes"></main>
 
   <section class="deck">
@@ -197,7 +199,7 @@ const VIEWS = [
   {key:"under", label:"Underwater"}
 ];
 const FRAME = 1/30;
-const state = {t:0,playing:false,speed:1,loop:true,tool:"line",color:"#FFB020",sticky:false,panes:[],undo:[]};
+const state = {t:0,playing:false,speed:1,loop:true,tool:"line",color:"#FFB020",sticky:false,solo:null,panes:[],undo:[]};
 
 const lanesEl = document.getElementById("lanes");
 VIEWS.forEach(v=>{
@@ -209,7 +211,7 @@ VIEWS.forEach(v=>{
       <span class="spacer"></span>
       <span class="mini" title="Playback rate — stretch this clip to match the other"><span class="lbl">rate</span>
         <button data-rate="-1" aria-label="Slower">−</button><span class="val rateval">100%</span><button data-rate="1" aria-label="Faster">+</button></span>
-      <button class="sync" aria-pressed="false">Sync</button>
+      <button class="sync" aria-pressed="false">Adjust</button>
       <button class="sync load">Load</button>
     </div>
     <div class="stage">
@@ -244,7 +246,7 @@ VIEWS.forEach(v=>{
   lane.querySelector(".load").onclick = ()=> p.file.click();
   p.file.onchange = e=>{ const f=e.target.files[0]; if(f) swapClip(p,f); };
   lane.querySelectorAll("[data-rate]").forEach(b=> b.onclick = ()=> nudgeRate(p, Number(b.dataset.rate)*0.02));
-  p.syncBtn.onclick = ()=> setMark(p);
+  p.syncBtn.onclick = ()=> toggleSolo(p);
   lane.addEventListener("dragover", e=>{e.preventDefault();lane.classList.add("dragover")});
   lane.addEventListener("dragleave", ()=> lane.classList.remove("dragover"));
   lane.addEventListener("drop", e=>{
@@ -260,31 +262,48 @@ function swapClip(p,file){
   p.footEl.textContent = file.name;
   p.footEl.style.color = "";
   p.emptyEl.style.display = "none";
-  p.offset = 0; p.rate = 1; p.mark = null;
-  p.syncBtn.setAttribute("aria-pressed","false"); p.root.classList.remove("marked");
+  p.offset = 0; p.rate = 1;
+  if(state.solo === p) exitSolo();
   p.rateEl.textContent = "100%";
 }
 
-/* ---------- sync + rate ---------- */
-function setMark(p){
-  p.mark = p.video.currentTime;
-  p.syncBtn.setAttribute("aria-pressed","true");
+/* ---------- adjust (solo) mode ---------- */
+function toggleSolo(p){
+  setPlaying(false);
+  if(state.solo === p){ exitSolo(); return; }
+  state.panes.forEach(q=>{ q.root.classList.remove("marked"); q.syncBtn.setAttribute("aria-pressed","false"); q.syncBtn.textContent="Adjust"; });
+  state.solo = p;
   p.root.classList.add("marked");
-  if(state.panes.every(q=> q.mark !== null)) align();
+  p.syncBtn.setAttribute("aria-pressed","true");
+  p.syncBtn.textContent = "Done";
+  banner();
 }
-function align(){
-  const ready = state.panes.filter(q=> q.mark !== null);
-  if(ready.length < 2) return;
-  const tAlign = Math.min(...ready.map(q=> q.mark / q.rate));
-  state.panes.forEach(q=>{ if(q.mark !== null) q.offset = q.mark - tAlign*q.rate; });
-  setPlaying(false); seek(tAlign);
+function exitSolo(){
+  const p = state.solo;
+  if(p){
+    p.root.classList.remove("marked");
+    p.syncBtn.setAttribute("aria-pressed","false");
+    p.syncBtn.textContent = "Adjust";
+  }
+  state.solo = null;
+  banner();
+}
+function banner(){
+  const b = document.getElementById("banner");
+  b.textContent = state.solo ? "Adjusting " + state.solo.label.toLowerCase() + " — move it to the matching frame, then tap Done" : "";
+  b.style.display = state.solo ? "block" : "none";
 }
 function nudgeRate(p, d){
   const before = p.video.currentTime;
   p.rate = Math.max(0.6, Math.min(1.6, p.rate + d));
   p.rateEl.textContent = Math.round(p.rate*100) + "%";
-  if(p.mark !== null && state.panes.every(q=> q.mark !== null)) align();
-  else { p.offset = before - state.t*p.rate; seek(state.t); }
+  p.offset = before - state.t*p.rate;
+  if(!state.solo) seek(state.t);
+}
+function resetSync(){
+  exitSolo();
+  state.panes.forEach(p=>{ p.offset=0; p.rate=1; p.rateEl.textContent="100%"; });
+  seek(0);
 }
 
 /* ---------- canvas ---------- */
@@ -299,6 +318,7 @@ state.panes.forEach(p=> ro.observe(p.root));
 
 /* ---------- clock ---------- */
 function duration(){
+  if(state.solo && isFinite(state.solo.video.duration)) return state.solo.video.duration;
   let d = Infinity;
   for(const p of state.panes){
     if(!isFinite(p.video.duration)) continue;
@@ -306,37 +326,54 @@ function duration(){
   }
   return isFinite(d) ? Math.max(d, 0.2) : 1;
 }
+function shown(){ return state.solo ? state.solo.video.currentTime : state.t; }
 function setPlaying(on){
   state.playing = on;
-  document.getElementById("playBtn").textContent = on ? "❚❚" : "▶";
+  document.getElementById("playBtn").textContent = on ? "\u275A\u275A" : "\u25B6";
   if(!on) state.panes.forEach(p=> p.video.pause());
 }
 function vtime(p,t){ return t*p.rate + p.offset; }
+
 function seek(t){
+  if(state.solo){
+    const p = state.solo, v = p.video;
+    if(!isFinite(v.duration)) return;
+    v.currentTime = Math.max(0, Math.min(t, v.duration - 0.001));
+    p.offset = v.currentTime - state.t*p.rate;   // master time stays put; this clip slides
+    return;
+  }
   state.t = Math.max(0, Math.min(t, duration()));
   state.panes.forEach(p=>{
     if(!isFinite(p.video.duration)) return;
     p.video.currentTime = Math.max(0, Math.min(vtime(p,state.t), p.video.duration - 0.001));
   });
 }
-function step(dir){ setPlaying(false); seek(state.t + dir*FRAME); }
+function step(dir){ setPlaying(false); seek(shown() + dir*FRAME); }
 
 let last = performance.now();
 function tick(now){
   const dt = Math.min((now-last)/1000, 0.1); last = now;
   if(state.playing){
-    const a = state.panes[0];
-    if(a && !a.video.paused) state.t = (a.video.currentTime - a.offset) / a.rate;
-    else state.t += dt * state.speed;
-    if(state.t >= duration()){ if(state.loop) seek(0); else { seek(duration()); setPlaying(false); } }
-    state.panes.forEach(p=>{
-      p.video.playbackRate = Math.max(0.0625, Math.min(4, state.speed * p.rate));
-      if(p.video.paused) p.video.play().catch(()=>{});
-      const target = vtime(p,state.t);
-      if(isFinite(p.video.duration) && Math.abs(p.video.currentTime - target) > 0.18){
-        p.video.currentTime = Math.max(0, Math.min(target, p.video.duration - 0.001));
-      }
-    });
+    if(state.solo){
+      const p = state.solo, v = p.video;
+      v.playbackRate = Math.max(0.0625, Math.min(4, state.speed * p.rate));
+      if(v.paused) v.play().catch(()=>{});
+      if(v.currentTime >= v.duration - 0.05){ if(state.loop) v.currentTime = 0; else setPlaying(false); }
+      p.offset = v.currentTime - state.t*p.rate;
+    } else {
+      const a = state.panes[0];
+      if(a && !a.video.paused) state.t = (a.video.currentTime - a.offset) / a.rate;
+      else state.t += dt * state.speed;
+      if(state.t >= duration()){ if(state.loop) seek(0); else { seek(duration()); setPlaying(false); } }
+      state.panes.forEach(p=>{
+        p.video.playbackRate = Math.max(0.0625, Math.min(4, state.speed * p.rate));
+        if(p.video.paused) p.video.play().catch(()=>{});
+        const target = vtime(p,state.t);
+        if(isFinite(p.video.duration) && Math.abs(p.video.currentTime - target) > 0.18){
+          p.video.currentTime = Math.max(0, Math.min(target, p.video.duration - 0.001));
+        }
+      });
+    }
   }
   state.panes.forEach(drawAnnotations);
   updateReadout();
@@ -351,8 +388,8 @@ function fmt(s){
 }
 const rope=document.getElementById("rope"), ropeFill=document.getElementById("ropeFill"), ropeKnob=document.getElementById("ropeKnob");
 function updateReadout(){
-  const d = duration(), pct = d ? (state.t/d)*100 : 0;
-  document.getElementById("tcNow").textContent = fmt(state.t);
+  const d = duration(), cur = shown(), pct = d ? (cur/d)*100 : 0;
+  document.getElementById("tcNow").textContent = fmt(cur);
   document.getElementById("tcEnd").textContent = fmt(d);
   ropeFill.style.width = pct+"%"; ropeKnob.style.left = pct+"%";
   const marks = new Set();
@@ -453,7 +490,7 @@ document.querySelectorAll("[data-color]").forEach(b=> b.onclick=()=>{
 document.getElementById("stickBtn").onclick = e=>{ state.sticky=!state.sticky; e.currentTarget.setAttribute("aria-pressed",state.sticky); };
 document.getElementById("undoBtn").onclick = ()=>{ const p=state.undo.pop(); if(p) p.shapes.pop(); };
 document.getElementById("clearBtn").onclick = ()=>{ state.panes.forEach(p=>{p.shapes=[];p.pts=[];p.draft=null;}); state.undo=[]; };
-document.getElementById("alignBtn").onclick = align;
+document.getElementById("alignBtn").onclick = resetSync;
 document.getElementById("layoutBtn").onclick = e=>{
   const on = !lanesEl.classList.contains("stack");
   lanesEl.classList.toggle("stack", on);
