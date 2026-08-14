@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Stroke — Stephen, before</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,7 +15,7 @@
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
-  margin:0;overflow:hidden;color:var(--tile);font-size:15px;
+  margin:0;overflow:hidden;touch-action:manipulation;-webkit-text-size-adjust:100%;color:var(--tile);font-size:15px;
   font-family:"Hanken Grotesk",system-ui,-apple-system,sans-serif;
   background:radial-gradient(120% 80% at 50% -10%,#0E3A4B 0%,var(--deep) 55%,#04161E 100%);
   -webkit-font-smoothing:antialiased;
@@ -84,7 +84,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .stage{position:relative;flex:1;min-height:0}
 .stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .stage video{object-fit:contain;background:#04161E;z-index:1}
-.stage canvas{z-index:2;touch-action:none}
+.stage canvas{z-index:2;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 .empty{
   position:absolute;inset:0;z-index:6;display:grid;place-items:center;
   border:2px dashed #245C72;border-radius:11px;margin:8px;
@@ -151,11 +151,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   <header class="top">
     <div class="mark"><h1>Stroke</h1><span>Stroke analysis — two angles</span></div>
     <div class="spacer"></div>
-    <button class="chip" id="alignBtn">Reset sync</button>
     <button class="chip" id="layoutBtn" aria-pressed="false">Stack</button>
   </header>
 
-  <div id="banner" class="banner" style="display:none"></div>
   <main class="lanes" id="lanes"></main>
 
   <section class="deck">
@@ -199,7 +197,7 @@ const VIEWS = [
   {key:"under", label:"Underwater"}
 ];
 const FRAME = 1/30;
-const state = {t:0,playing:false,speed:1,loop:true,tool:"line",color:"#FFB020",sticky:false,solo:null,panes:[],undo:[]};
+const state = {t:0,playing:false,speed:1,loop:true,tool:"line",color:"#FFB020",sticky:false,panes:[],undo:[]};
 
 const lanesEl = document.getElementById("lanes");
 VIEWS.forEach(v=>{
@@ -209,9 +207,6 @@ VIEWS.forEach(v=>{
     <div class="lane-head">
       <span class="tag">${v.label}</span>
       <span class="spacer"></span>
-      <span class="mini" title="Playback rate — stretch this clip to match the other"><span class="lbl">rate</span>
-        <button data-rate="-1" aria-label="Slower">−</button><span class="val rateval">100%</span><button data-rate="1" aria-label="Faster">+</button></span>
-      <button class="sync" aria-pressed="false">Adjust</button>
       <button class="sync load">Load</button>
     </div>
     <div class="stage">
@@ -228,10 +223,8 @@ VIEWS.forEach(v=>{
     video:lane.querySelector("video"),
     canvas:lane.querySelector("canvas"),
     file:lane.querySelector("input"),
-    rateEl:lane.querySelector(".rateval"),
-    syncBtn:lane.querySelector(".sync"),
     footEl:lane.querySelector(".foot"),
-    offset:0, rate:1, mark:null, shapes:[], draft:null, pts:[]
+    shapes:[], draft:null, pts:[]
   };
   p.emptyEl = lane.querySelector(".empty");
   p.emptyEl.onclick = ()=> p.file.click();
@@ -245,8 +238,6 @@ VIEWS.forEach(v=>{
   });
   lane.querySelector(".load").onclick = ()=> p.file.click();
   p.file.onchange = e=>{ const f=e.target.files[0]; if(f) swapClip(p,f); };
-  lane.querySelectorAll("[data-rate]").forEach(b=> b.onclick = ()=> nudgeRate(p, Number(b.dataset.rate)*0.02));
-  p.syncBtn.onclick = ()=> toggleSolo(p);
   lane.addEventListener("dragover", e=>{e.preventDefault();lane.classList.add("dragover")});
   lane.addEventListener("dragleave", ()=> lane.classList.remove("dragover"));
   lane.addEventListener("drop", e=>{
@@ -262,48 +253,6 @@ function swapClip(p,file){
   p.footEl.textContent = file.name;
   p.footEl.style.color = "";
   p.emptyEl.style.display = "none";
-  p.offset = 0; p.rate = 1;
-  if(state.solo === p) exitSolo();
-  p.rateEl.textContent = "100%";
-}
-
-/* ---------- adjust (solo) mode ---------- */
-function toggleSolo(p){
-  setPlaying(false);
-  if(state.solo === p){ exitSolo(); return; }
-  state.panes.forEach(q=>{ q.root.classList.remove("marked"); q.syncBtn.setAttribute("aria-pressed","false"); q.syncBtn.textContent="Adjust"; });
-  state.solo = p;
-  p.root.classList.add("marked");
-  p.syncBtn.setAttribute("aria-pressed","true");
-  p.syncBtn.textContent = "Done";
-  banner();
-}
-function exitSolo(){
-  const p = state.solo;
-  if(p){
-    p.root.classList.remove("marked");
-    p.syncBtn.setAttribute("aria-pressed","false");
-    p.syncBtn.textContent = "Adjust";
-  }
-  state.solo = null;
-  banner();
-}
-function banner(){
-  const b = document.getElementById("banner");
-  b.textContent = state.solo ? "Adjusting " + state.solo.label.toLowerCase() + " — move it to the matching frame, then tap Done" : "";
-  b.style.display = state.solo ? "block" : "none";
-}
-function nudgeRate(p, d){
-  const before = p.video.currentTime;
-  p.rate = Math.max(0.6, Math.min(1.6, p.rate + d));
-  p.rateEl.textContent = Math.round(p.rate*100) + "%";
-  p.offset = before - state.t*p.rate;
-  if(!state.solo) seek(state.t);
-}
-function resetSync(){
-  exitSolo();
-  state.panes.forEach(p=>{ p.offset=0; p.rate=1; p.rateEl.textContent="100%"; });
-  seek(0);
 }
 
 /* ---------- canvas ---------- */
@@ -318,62 +267,41 @@ state.panes.forEach(p=> ro.observe(p.root));
 
 /* ---------- clock ---------- */
 function duration(){
-  if(state.solo && isFinite(state.solo.video.duration)) return state.solo.video.duration;
   let d = Infinity;
   for(const p of state.panes){
-    if(!isFinite(p.video.duration)) continue;
-    d = Math.min(d, (p.video.duration - p.offset) / p.rate);
+    if(isFinite(p.video.duration)) d = Math.min(d, p.video.duration);
   }
   return isFinite(d) ? Math.max(d, 0.2) : 1;
 }
-function shown(){ return state.solo ? state.solo.video.currentTime : state.t; }
 function setPlaying(on){
   state.playing = on;
   document.getElementById("playBtn").textContent = on ? "\u275A\u275A" : "\u25B6";
   if(!on) state.panes.forEach(p=> p.video.pause());
 }
-function vtime(p,t){ return t*p.rate + p.offset; }
-
 function seek(t){
-  if(state.solo){
-    const p = state.solo, v = p.video;
-    if(!isFinite(v.duration)) return;
-    v.currentTime = Math.max(0, Math.min(t, v.duration - 0.001));
-    p.offset = v.currentTime - state.t*p.rate;   // master time stays put; this clip slides
-    return;
-  }
   state.t = Math.max(0, Math.min(t, duration()));
   state.panes.forEach(p=>{
     if(!isFinite(p.video.duration)) return;
-    p.video.currentTime = Math.max(0, Math.min(vtime(p,state.t), p.video.duration - 0.001));
+    p.video.currentTime = Math.max(0, Math.min(state.t, p.video.duration - 0.001));
   });
 }
-function step(dir){ setPlaying(false); seek(shown() + dir*FRAME); }
+function step(dir){ setPlaying(false); seek(state.t + dir*FRAME); }
 
 let last = performance.now();
 function tick(now){
   const dt = Math.min((now-last)/1000, 0.1); last = now;
   if(state.playing){
-    if(state.solo){
-      const p = state.solo, v = p.video;
-      v.playbackRate = Math.max(0.0625, Math.min(4, state.speed * p.rate));
-      if(v.paused) v.play().catch(()=>{});
-      if(v.currentTime >= v.duration - 0.05){ if(state.loop) v.currentTime = 0; else setPlaying(false); }
-      p.offset = v.currentTime - state.t*p.rate;
-    } else {
-      const a = state.panes[0];
-      if(a && !a.video.paused) state.t = (a.video.currentTime - a.offset) / a.rate;
-      else state.t += dt * state.speed;
-      if(state.t >= duration()){ if(state.loop) seek(0); else { seek(duration()); setPlaying(false); } }
-      state.panes.forEach(p=>{
-        p.video.playbackRate = Math.max(0.0625, Math.min(4, state.speed * p.rate));
-        if(p.video.paused) p.video.play().catch(()=>{});
-        const target = vtime(p,state.t);
-        if(isFinite(p.video.duration) && Math.abs(p.video.currentTime - target) > 0.18){
-          p.video.currentTime = Math.max(0, Math.min(target, p.video.duration - 0.001));
-        }
-      });
-    }
+    const a = state.panes[0];
+    if(a && !a.video.paused) state.t = a.video.currentTime;
+    else state.t += dt * state.speed;
+    if(state.t >= duration()){ if(state.loop) seek(0); else { seek(duration()); setPlaying(false); } }
+    state.panes.forEach(p=>{
+      p.video.playbackRate = Math.max(0.0625, Math.min(4, state.speed));
+      if(p.video.paused) p.video.play().catch(()=>{});
+      if(isFinite(p.video.duration) && Math.abs(p.video.currentTime - state.t) > 0.18){
+        p.video.currentTime = Math.max(0, Math.min(state.t, p.video.duration - 0.001));
+      }
+    });
   }
   state.panes.forEach(drawAnnotations);
   updateReadout();
@@ -388,7 +316,7 @@ function fmt(s){
 }
 const rope=document.getElementById("rope"), ropeFill=document.getElementById("ropeFill"), ropeKnob=document.getElementById("ropeKnob");
 function updateReadout(){
-  const d = duration(), cur = shown(), pct = d ? (cur/d)*100 : 0;
+  const d = duration(), cur = state.t, pct = d ? (cur/d)*100 : 0;
   document.getElementById("tcNow").textContent = fmt(cur);
   document.getElementById("tcEnd").textContent = fmt(d);
   ropeFill.style.width = pct+"%"; ropeKnob.style.left = pct+"%";
@@ -409,6 +337,8 @@ function attachDrawing(p){
   const c = p.canvas;
   const pos = e=>{ const r=c.getBoundingClientRect(); return {x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height}; };
   c.addEventListener("pointerdown", e=>{
+    p.active = (p.active || 0) + 1;
+    if(p.active > 1){ p.draft = null; p.pts = []; return; }   // second finger: abandon, don't draw
     c.setPointerCapture(e.pointerId); setPlaying(false);
     const pt = pos(e);
     if(state.tool === "angle"){
@@ -418,13 +348,17 @@ function attachDrawing(p){
     } else p.draft = {tool:state.tool, pts:[pt,pt]};
   });
   c.addEventListener("pointermove", e=>{
-    if(!p.draft) return;
+    if(!p.draft || (p.active||0) > 1) return;
     const pt = pos(e);
     if(p.draft.tool === "trace") p.draft.pts.push(pt);
     else if(p.draft.tool === "line") p.draft.pts[1] = pt;
     else p.draft.live = pt;
   });
-  const end = ()=>{ if(p.draft && p.draft.tool !== "angle"){ commit(p,p.draft); p.draft=null; } };
+  const end = ()=>{
+    p.active = Math.max(0, (p.active || 1) - 1);
+    if(p.active > 0){ p.draft = null; return; }
+    if(p.draft && p.draft.tool !== "angle"){ commit(p,p.draft); p.draft=null; }
+  };
   c.addEventListener("pointerup", end);
   c.addEventListener("pointercancel", end);
 }
@@ -490,12 +424,22 @@ document.querySelectorAll("[data-color]").forEach(b=> b.onclick=()=>{
 document.getElementById("stickBtn").onclick = e=>{ state.sticky=!state.sticky; e.currentTarget.setAttribute("aria-pressed",state.sticky); };
 document.getElementById("undoBtn").onclick = ()=>{ const p=state.undo.pop(); if(p) p.shapes.pop(); };
 document.getElementById("clearBtn").onclick = ()=>{ state.panes.forEach(p=>{p.shapes=[];p.pts=[];p.draft=null;}); state.undo=[]; };
-document.getElementById("alignBtn").onclick = resetSync;
 document.getElementById("layoutBtn").onclick = e=>{
   const on = !lanesEl.classList.contains("stack");
   lanesEl.classList.toggle("stack", on);
   e.currentTarget.setAttribute("aria-pressed", on);
-  setTimeout(()=> state.panes.forEach(p=> fit(p.canvas)), 60);
+  /* stop iOS page zoom: double-tap and pinch both hijack the drawing surface */
+["gesturestart","gesturechange","gestureend"].forEach(ev=>
+  document.addEventListener(ev, e=> e.preventDefault(), {passive:false}));
+document.addEventListener("dblclick", e=> e.preventDefault(), {passive:false});
+let lastTap = 0;
+document.addEventListener("touchend", e=>{
+  const now = Date.now();
+  if(now - lastTap < 350) e.preventDefault();
+  lastTap = now;
+}, {passive:false});
+
+setTimeout(()=> state.panes.forEach(p=> fit(p.canvas)), 60);
 };
 
 let scrubbing=false;
@@ -514,6 +458,17 @@ document.addEventListener("keydown", e=>{
   if(e.key==="2") pickTool("angle");
   if(e.key==="3") pickTool("trace");
 });
+/* stop iOS page zoom: double-tap and pinch both hijack the drawing surface */
+["gesturestart","gesturechange","gestureend"].forEach(ev=>
+  document.addEventListener(ev, e=> e.preventDefault(), {passive:false}));
+document.addEventListener("dblclick", e=> e.preventDefault(), {passive:false});
+let lastTap = 0;
+document.addEventListener("touchend", e=>{
+  const now = Date.now();
+  if(now - lastTap < 350) e.preventDefault();
+  lastTap = now;
+}, {passive:false});
+
 setTimeout(()=> state.panes.forEach(p=> fit(p.canvas)), 60);
 </script>
 </body>
